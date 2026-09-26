@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>五子棋 AI 对战 · Gobang</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg-decor"><span></span><span></span><span></span></div>
+
+  <header class="header">
+    <div class="logo">⚫⚪</div>
+    <div>
+      <h1>五子棋 · 人机对战</h1>
+      <p>GOBANG AI GAME — 15 × 15 经典对弈</p>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="board-card">
+      <div class="board-head">
+        <div id="status" class="status">轮到你落子（黑棋）</div>
+        <div id="moveCount" class="move-count">手数 0</div>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="board" width="600" height="600"></canvas>
+        <div id="winOverlay" class="win-overlay hidden">
+          <div class="win-card">
+            <div id="winEmoji" class="win-emoji">🎉</div>
+            <h2 id="winTitle">你赢了！</h2>
+            <p id="winDesc">恭喜，漂亮的五连！</p>
+            <button id="againBtn" class="btn primary">再来一局</button>
+          </div>
+        </div>
+      </div>
+      <div class="hint">💡 鼠标悬停可预览落子 · 黑棋先行 · 率先连成五子获胜</div>
+    </section>
+
+    <aside class="panel">
+      <div class="card">
+        <h3>⚙️ 对局设置</h3>
+
+        <label class="label">执子选择</label>
+        <div class="seg" id="colorSeg">
+          <button data-color="black" class="active">执黑先行</button>
+          <button data-color="white">执白后行</button>
+        </div>
+
+        <label class="label">AI 难度</label>
+        <div class="seg" id="levelSeg">
+          <button data-level="easy">新手</button>
+          <button data-level="medium" class="active">进阶</button>
+          <button data-level="hard">大师</button>
+        </div>
+
+        <label class="label">AI 思考 <span id="thinkingLabel"></span></label>
+
+        <div class="btn-grid">
+          <button id="restartBtn" class="btn primary">🔄 重新开始</button>
+          <button id="undoBtn" class="btn">↩️ 悔棋</button>
+        </div>
+        <div class="btn-grid">
+          <button id="swapBtn" class="btn ghost">🔀 交换先后手</button>
+          <button id="hintBtn" class="btn ghost">💡 AI 支招</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>📊 棋局信息</h3>
+        <div class="info-row"><span>你执</span><b id="youAre">黑棋 ●</b></div>
+        <div class="info-row"><span>当前回合</span><b id="turnInfo">黑棋</b></div>
+        <div class="info-row"><span>AI 状态</span><b id="aiState">待机</b></div>
+        <div class="progress"><div id="aiBar"></div></div>
+        <div class="history-head">棋谱记录</div>
+        <ol id="history" class="history"></ol>
+      </div>
+
+      <div class="card rules">
+        <h3>📖 玩法说明</h3>
+        <ul>
+          <li>黑棋先行，双方轮流在交叉点落子。</li>
+          <li>横 / 竖 / 斜任一方向先连成 5 子即获胜。</li>
+          <li>悔棋会同时撤回你与 AI 的各一步。</li>
+          <li>大师难度带 2 步预判，试试防守反击！</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+
+  <footer>Built with HTML · CSS · JavaScript + 启发式 AI 评估算法</footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
