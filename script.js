@@ -4,6 +4,7 @@ const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
 
 const statusEl = document.getElementById('status');
+const statusText = document.getElementById('statusText');
 const moveCountEl = document.getElementById('moveCount');
 const turnInfoEl = document.getElementById('turnInfo');
 const youAreEl = document.getElementById('youAre');
@@ -13,7 +14,12 @@ const historyEl = document.getElementById('history');
 const winOverlay = document.getElementById('winOverlay');
 const winTitle = document.getElementById('winTitle');
 const winDesc = document.getElementById('winDesc');
-const winEmoji = document.getElementById('winEmoji');
+const winIcon = document.getElementById('winIcon');
+
+/* 胜负图标：内联 SVG，替代 emoji */
+const ICON_WIN = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="currentColor" stroke-width="1.6"/><path d="M7 5H4.5A1.5 1.5 0 0 0 4.6 8c.8.4 1.6.7 2.4.9M17 5h2.5A1.5 1.5 0 0 1 19.4 8c-.8.4-1.6.7-2.4.9M12 14v3M8.5 20.5h7M10 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_LOSS = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9H5M2.5 15H5M19 9h2.5M19 15h2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg>';
+const ICON_DRAW = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="7.5" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 12h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
 let board, history, gameOver, playerColor, aiColor, level, currentColor, lastMove, hoverPos, aiThinking;
 
@@ -48,36 +54,71 @@ function draw() {
   const w = canvas.width, cs = cell();
   ctx.clearRect(0, 0, w, w);
 
-  // 木纹底
-  const g = ctx.createLinearGradient(0, 0, w, w);
-  g.addColorStop(0, '#f3d08c'); g.addColorStop(0.5, '#e8b26a'); g.addColorStop(1, '#d99a4e');
-  ctx.fillStyle = g;
+  // 石质 / 宣纸底：雅致米色，杜绝高饱和渐变
+  ctx.fillStyle = '#ded0ab';
+  ctx.fillRect(0, 0, w, w);
+
+  // 细腻木纹：极淡横向纹理
+  ctx.save();
+  ctx.globalAlpha = 0.05;
+  ctx.strokeStyle = '#7a6242';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 26; i++) {
+    const y = (i + 0.5) * (w / 26) + Math.sin(i * 2.1) * 3;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(w * 0.3, y + 4, w * 0.6, y - 4, w, y + 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 边缘暗角：轻微收边，突出质感
+  const vignette = ctx.createRadialGradient(w / 2, w / 2, w * 0.35, w / 2, w / 2, w * 0.75);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, 'rgba(74,58,34,0.14)');
+  ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, w, w);
 
   // 网格
-  ctx.strokeStyle = 'rgba(90,50,15,.85)';
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(74,63,46,0.88)';
+  ctx.lineWidth = 1;
   for (let i = 0; i < SIZE; i++) {
     const p = cs / 2 + i * cs;
     ctx.beginPath(); ctx.moveTo(cs / 2, p); ctx.lineTo(w - cs / 2, p); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(p, cs / 2); ctx.lineTo(p, w - cs / 2); ctx.stroke();
   }
 
-  // 星位
-  const stars = [3, 7, 11];
-  ctx.fillStyle = '#5a3210';
-  for (const x of stars) for (const y of stars) {
+  // 外框：沉稳双线
+  ctx.strokeStyle = 'rgba(58,48,34,0.95)';
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(cs / 2, cs / 2, w - cs, w - cs);
+  ctx.strokeStyle = 'rgba(58,48,34,0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cs / 2 - 5, cs / 2 - 5, w - cs + 10, w - cs + 10);
+
+  // 星位：标准五星位
+  const stars = [[3, 3], [11, 3], [3, 11], [11, 11], [7, 7]];
+  ctx.fillStyle = '#4a3f2e';
+  for (const [sx, sy] of stars) {
     ctx.beginPath();
-    ctx.arc(cs / 2 + x * cs, cs / 2 + y * cs, 4, 0, Math.PI * 2);
+    ctx.arc(cs / 2 + sx * cs, cs / 2 + sy * cs, Math.max(3, cs * 0.09), 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // 悬停预览
+  // 悬停预览：淡影 + 细环
   if (hoverPos && !gameOver && currentColor === playerColor && board[hoverPos.y][hoverPos.x] === 0) {
+    const cx = cs / 2 + hoverPos.x * cs, cy = cs / 2 + hoverPos.y * cs;
     ctx.beginPath();
-    ctx.arc(cs / 2 + hoverPos.x * cs, cs / 2 + hoverPos.y * cs, cs * 0.42, 0, Math.PI * 2);
-    ctx.fillStyle = playerColor === 1 ? 'rgba(20,20,20,.35)' : 'rgba(255,255,255,.55)';
+    ctx.arc(cx, cy, cs * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = playerColor === 1 ? 'rgba(18,18,20,0.28)' : 'rgba(255,255,255,0.5)';
     ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx, cy, cs * 0.42, 0, Math.PI * 2);
+    ctx.strokeStyle = playerColor === 1 ? 'rgba(18,18,20,0.35)' : 'rgba(90,80,60,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   // 棋子
@@ -85,26 +126,70 @@ function draw() {
     if (board[y][x] !== 0) drawStone(x, y, board[y][x]);
   }
 
-  // 最后一手标记
+  // 最后一手：优雅同心环指示器（替代红色方框）
   if (lastMove) {
-    ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 2;
     const cx = cs / 2 + lastMove.x * cs, cy = cs / 2 + lastMove.y * cs;
-    ctx.strokeRect(cx - 8, cy - 8, 16, 16);
+    const onBlack = board[lastMove.y][lastMove.x] === 1;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, cs * 0.24, 0, Math.PI * 2);
+    ctx.strokeStyle = onBlack ? 'rgba(222,203,162,0.95)' : 'rgba(140,96,52,0.9)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = onBlack ? 'rgba(222,203,162,0.95)' : 'rgba(140,96,52,0.9)';
+    ctx.fill();
+    ctx.restore();
   }
 }
 
 function drawStone(x, y, color) {
   const cs = cell(), cx = cs / 2 + x * cs, cy = cs / 2 + y * cs, r = cs * 0.44;
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 3;
-  const grad = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r);
-  if (color === 1) { grad.addColorStop(0, '#5b5b5b'); grad.addColorStop(0.4, '#232323'); grad.addColorStop(1, '#000'); }
-  else { grad.addColorStop(0, '#fff'); grad.addColorStop(0.6, '#e8e8e8'); grad.addColorStop(1, '#b9b9b9'); }
+  // 柔和落子阴影
+  ctx.shadowColor = 'rgba(40,30,15,0.45)';
+  ctx.shadowBlur = 7;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 3;
+  const grad = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.38, r * 0.08, cx, cy, r);
+  if (color === 1) {
+    grad.addColorStop(0, '#4c4e54');
+    grad.addColorStop(0.35, '#232529');
+    grad.addColorStop(1, '#0b0c0e');
+  } else {
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.55, '#ece7db');
+    grad.addColorStop(1, '#c2bba9');
+  }
   ctx.fillStyle = grad;
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
-  if (color === 2) { ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); }
+
+  // 表面高光：黑子一笔月牙光，白子淡影描边
+  if (color === 1) {
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    const hl = ctx.createRadialGradient(cx - r * 0.32, cy - r * 0.36, 0, cx - r * 0.32, cy - r * 0.36, r * 0.4);
+    hl.addColorStop(0, 'rgba(255,255,255,0.55)');
+    hl.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hl;
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.28, cy - r * 0.32, r * 0.32, r * 0.2, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = 'rgba(90,76,52,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, r - 0.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.25, cy - r * 0.3, r * 0.28, r * 0.16, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 }
 
 // ---------- 落子 / 胜负 ----------
@@ -138,11 +223,15 @@ function placeStone(x, y, color) {
   return null;
 }
 
+function coordLabel(x, y) {
+  return String.fromCharCode(65 + x) + (y + 1);
+}
+
 function addHistoryItem() {
   const m = history[history.length - 1];
   const li = document.createElement('li');
-  const label = (m.color === 1 ? '●黑' : '○白') + ` (${String.fromCharCode(65 + m.x)}${m.y + 1})`;
-  li.textContent = `第${history.length}手 ${label}` + (m.color === playerColor ? ' · 你' : ' · AI');
+  const label = (m.color === 1 ? '黑' : '白') + ' ' + coordLabel(m.x, m.y);
+  li.textContent = '第' + history.length + '手 ' + label + (m.color === playerColor ? ' · 你' : ' · AI');
   historyEl.prepend(li);
 }
 
@@ -150,25 +239,33 @@ function endGame(winner, winCells) {
   gameOver = true;
   winOverlay.classList.remove('hidden');
   if (winner === 0) {
-    winEmoji.textContent = '🤝'; winTitle.textContent = '和棋！';
+    winIcon.innerHTML = ICON_DRAW;
+    winTitle.textContent = '和棋';
     winDesc.textContent = '棋盘已满，势均力敌。';
-    statusEl.textContent = '和棋';
+    setStatus('和棋');
   } else if (winner === playerColor) {
-    winEmoji.textContent = '🎉'; winTitle.textContent = '你赢了！';
-    winDesc.textContent = `恭喜！你在第 ${history.length} 手连成五子。`;
-    statusEl.textContent = '🎉 你获胜！';
+    winIcon.innerHTML = ICON_WIN;
+    winTitle.textContent = '你赢了';
+    winDesc.textContent = '恭喜，在第 ' + history.length + ' 手连成五子。';
+    setStatus('你获胜');
   } else {
-    winEmoji.textContent = '🤖'; winTitle.textContent = 'AI 获胜';
-    winDesc.textContent = `AI 在第 ${history.length} 手获胜，再接再厉！`;
-    statusEl.textContent = 'AI 获胜，再来一局吧';
+    winIcon.innerHTML = ICON_LOSS;
+    winTitle.textContent = 'AI 获胜';
+    winDesc.textContent = 'AI 在第 ' + history.length + ' 手获胜，再接再厉。';
+    setStatus('AI 获胜，再来一局');
   }
   turnInfoEl.textContent = winner === 0 ? '和棋' : (winner === 1 ? '黑棋胜' : '白棋胜');
 }
 
+function setStatus(text) {
+  if (statusText) statusText.textContent = text;
+  else if (statusEl) statusEl.textContent = text;
+}
+
 function updateUI(text) {
-  if (text) statusEl.textContent = text;
+  if (text) setStatus(text);
   turnInfoEl.textContent = currentColor === 1 ? '黑棋' : '白棋';
-  youAreEl.textContent = playerColor === 1 ? '黑棋 ●' : '白棋 ○';
+  youAreEl.textContent = playerColor === 1 ? '黑棋' : '白棋';
 }
 
 // ---------- AI 算法 ----------
@@ -274,10 +371,9 @@ function aiMove(hintOnly = false) {
   if (gameOver) return null;
   if (aiThinking && !hintOnly) return null;
   aiThinking = true;
-  aiStateEl.textContent = '思考中…';
+  aiStateEl.textContent = '思考中';
   aiBar.style.width = '35%';
-  document.getElementById('thinkingLabel').textContent = '…';
-
+  document.getElementById('thinkingLabel').textContent = '演算中';
   return new Promise(resolve => {
     setTimeout(() => {
       const mover = hintOnly ? playerColor : aiColor;
@@ -315,7 +411,7 @@ canvas.addEventListener('click', e => {
   const p = posFromEvent(e);
   if (!p || board[p.y][p.x] !== 0) return;
   placeStone(p.x, p.y, playerColor);
-  if (!gameOver) { updateUI('AI 思考中…'); aiMove(); }
+  if (!gameOver) { updateUI('AI 思考中'); aiMove(); }
 });
 
 document.getElementById('restartBtn').onclick = () => resetGame();
@@ -356,7 +452,7 @@ document.getElementById('undoBtn').onclick = () => {
   historyEl.innerHTML = '';
   history.forEach((m, i) => {
     const li = document.createElement('li');
-    li.textContent = `第${i + 1}手 ${(m.color === 1 ? '●黑' : '○白')} (${String.fromCharCode(65 + m.x)}${m.y + 1})` + (m.color === playerColor ? ' · 你' : ' · AI');
+    li.textContent = '第' + (i + 1) + '手 ' + (m.color === 1 ? '黑' : '白') + ' ' + coordLabel(m.x, m.y) + (m.color === playerColor ? ' · 你' : ' · AI');
     historyEl.prepend(li);
   });
   moveCountEl.textContent = '手数 ' + history.length;
@@ -366,11 +462,11 @@ document.getElementById('undoBtn').onclick = () => {
 
 document.getElementById('hintBtn').onclick = async () => {
   if (gameOver || aiThinking || currentColor !== playerColor) return;
-  aiStateEl.textContent = '支招中…';
+  aiStateEl.textContent = '支招中';
   const mv = await aiMove(true);
   if (mv) {
     hoverPos = mv;
-    updateUI(`💡 建议落子：${String.fromCharCode(65 + mv.x)}${mv.y + 1}（点击棋盘落子）`);
+    updateUI('建议落子：' + coordLabel(mv.x, mv.y) + '（点击棋盘落子）');
     draw();
     // 高亮提示 1.2s
     setTimeout(() => { if (hoverPos === mv) hoverPos = null; }, 2000);
@@ -385,14 +481,16 @@ document.getElementById('swapBtn').onclick = () => {
 };
 
 document.getElementById('colorSeg').addEventListener('click', e => {
-  if (e.target.dataset.color) {
-    playerColor = e.target.dataset.color === 'black' ? 1 : 2;
+  const btn = e.target.closest('button');
+  if (btn && btn.dataset.color) {
+    playerColor = btn.dataset.color === 'black' ? 1 : 2;
     aiColor = playerColor === 1 ? 2 : 1;
     syncSeg(); resetGame();
   }
 });
 document.getElementById('levelSeg').addEventListener('click', e => {
-  if (e.target.dataset.level) { level = e.target.dataset.level; syncSeg(); }
+  const btn = e.target.closest('button');
+  if (btn && btn.dataset.level) { level = btn.dataset.level; syncSeg(); }
 });
 
 function syncSeg() {
