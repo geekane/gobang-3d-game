@@ -29,10 +29,170 @@ const flashEl = document.getElementById('flash');
 const resetViewBtn = document.getElementById('resetViewBtn');
 const rotateBtn = document.getElementById('rotateBtn');
 const topViewBtn = document.getElementById('topViewBtn');
+const soundBtn = document.getElementById('soundBtn');
 
 const ICON_WIN = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="currentColor" stroke-width="1.6"/><path d="M7 5H4.5A1.5 1.5 0 0 0 4.6 8c.8.4 1.6.7 2.4.9M17 5h2.5A1.5 1.5 0 0 1 19.4 8c-.8.4-1.6.7-2.4.9M12 14v3M8.5 20.5h7M10 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_LOSS = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M9 2.5v2.5M15 2.5v2.5M9 19v2.5M15 19v2.5M2.5 9H5M2.5 15H5M19 9h2.5M19 15h2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg>';
 const ICON_DRAW = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="7.5" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 12h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+
+const ICON_SOUND_ON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 6v4h2.5L9 13.5v-11L5 6H2.5z" fill="currentColor"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+const ICON_SOUND_OFF = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 6v4h2.5L9 13.5v-11L5 6H2.5z" fill="currentColor"/><path d="M11.5 6.5l3 3M14.5 6.5l-3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+
+/* ================= 原生 Web Audio 拟真合成系统（零外部 mp3/wav 依赖） ================= */
+const AudioEngine = {
+  ctx: null,
+  master: null,
+  muted: false,
+  lastHoverAt: 0,
+
+  ensure() {
+    try {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return false;
+        this.ctx = new AC();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = this.muted ? 0 : 0.55;
+        // 轻微压缩，防止胜利和弦叠加爆音
+        const comp = this.ctx.createDynamicsCompressor();
+        comp.threshold.value = -18;
+        comp.ratio.value = 6;
+        this.master.connect(comp);
+        comp.connect(this.ctx.destination);
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return true;
+    } catch (e) { return false; }
+  },
+
+  setMuted(m) {
+    this.muted = !!m;
+    if (this.master && this.ctx) {
+      this.master.gain.setTargetAtTime(this.muted ? 0 : 0.55, this.ctx.currentTime, 0.02);
+    }
+    this.syncButton();
+  },
+
+  syncButton() {
+    if (!soundBtn) return;
+    soundBtn.innerHTML = (this.muted ? ICON_SOUND_OFF : ICON_SOUND_ON) + '<span>' + (this.muted ? '静音' : '音效开') + '</span>';
+    soundBtn.classList.toggle('muted', this.muted);
+    soundBtn.setAttribute('aria-pressed', String(!this.muted));
+    soundBtn.title = this.muted ? '开启音效' : '静音（关闭合成音效）';
+  },
+
+  // 基础：包络音调
+  tone({ freq = 440, freqEnd = null, type = 'sine', dur = 0.2, vol = 0.2, delay = 0, attack = 0.004 }) {
+    if (this.muted || !this.ensure()) return;
+    const t0 = this.ctx.currentTime + delay;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.05);
+  },
+
+  // 基础：滤波噪声敲击瞬态
+  noise({ dur = 0.05, vol = 0.25, freq = 2500, q = 1.2, type = 'bandpass', delay = 0 }) {
+    if (this.muted || !this.ensure()) return;
+    const t0 = this.ctx.currentTime + delay;
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const flt = this.ctx.createBiquadFilter();
+    flt.type = type;
+    flt.frequency.value = freq;
+    flt.Q.value = q;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(flt);
+    flt.connect(g);
+    g.connect(this.master);
+    src.start(t0);
+  },
+
+  // 落子：木石共振敲击感（黑棋低沉 / 白棋清亮）
+  playStone(color) {
+    if (this.muted || !this.ensure()) return;
+    const dark = color === 1;
+    const bodyFreq = dark ? 540 : 760;
+    // 木质腔体共鸣
+    this.tone({ freq: bodyFreq, freqEnd: bodyFreq * 0.55, type: 'triangle', dur: 0.16, vol: 0.42 });
+    this.tone({ freq: dark ? 162 : 196, type: 'sine', dur: 0.18, vol: 0.38 });
+    // 石质清脆瞬态
+    this.noise({ dur: 0.045, vol: 0.30, freq: dark ? 2300 : 3100, q: 1.1 });
+    // 高频泛音尾韵
+    this.tone({ freq: dark ? 1620 : 2080, type: 'sine', dur: 0.09, vol: 0.07, delay: 0.008 });
+  },
+
+  // 悬停：交叉点微弱轻音（节流由调用方 + 内部双保险）
+  playHover() {
+    if (this.muted) return;
+    const now = performance.now();
+    if (now - this.lastHoverAt < 90) return;
+    this.lastHoverAt = now;
+    this.tone({ freq: 2350, type: 'sine', dur: 0.06, vol: 0.035 });
+  },
+
+  // 悔棋：回溯升调（宫商角式上行三音）
+  playUndo() {
+    if (this.muted || !this.ensure()) return;
+    const notes = [523.25, 659.25, 783.99];
+    notes.forEach((f, i) => {
+      this.tone({ freq: f, type: 'triangle', dur: 0.16, vol: 0.20, delay: i * 0.07 });
+      this.tone({ freq: f * 2, type: 'sine', dur: 0.10, vol: 0.05, delay: i * 0.07 });
+    });
+  },
+
+  // 获胜：金色三和弦胜利共鸣（C-E-G-C 琶音 + 高频 shimmer，长衰减）
+  playWin() {
+    if (this.muted || !this.ensure()) return;
+    const chord = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+    chord.forEach((f, i) => {
+      const dl = i * 0.13;
+      this.tone({ freq: f, type: 'triangle', dur: 2.4, vol: 0.24, delay: dl });
+      this.tone({ freq: f, type: 'sine', dur: 2.8, vol: 0.16, delay: dl + 0.02 });
+      this.tone({ freq: f * 2, type: 'sine', dur: 1.6, vol: 0.05, delay: dl + 0.03 });
+    });
+    // 金色 shimmer
+    [1318.5, 1568, 2093].forEach((f, i) => {
+      this.tone({ freq: f, type: 'sine', dur: 1.8, vol: 0.06, delay: 0.55 + i * 0.16 });
+    });
+    this.noise({ dur: 0.5, vol: 0.05, freq: 6000, q: 0.8, type: 'highpass', delay: 0.1 });
+  },
+
+  // 落败：深沉低频阻尼衰减震荡（下扫 + 低通轰鸣）
+  playLose() {
+    if (this.muted || !this.ensure()) return;
+    this.tone({ freq: 110, freqEnd: 44, type: 'triangle', dur: 2.0, vol: 0.42 });
+    this.tone({ freq: 68, type: 'sine', dur: 2.4, vol: 0.44 });
+    this.tone({ freq: 51, type: 'sine', dur: 2.6, vol: 0.30, delay: 0.05 });
+    this.tone({ freq: 220, freqEnd: 55, type: 'sawtooth', dur: 1.2, vol: 0.06 });
+    this.noise({ dur: 0.35, vol: 0.10, freq: 320, q: 0.7, type: 'lowpass' });
+  },
+
+  // 和棋：中性完全五度，温和收尾
+  playDraw() {
+    if (this.muted || !this.ensure()) return;
+    this.tone({ freq: 392, type: 'triangle', dur: 1.2, vol: 0.20 });
+    this.tone({ freq: 587.33, type: 'triangle', dur: 1.4, vol: 0.18, delay: 0.12 });
+  },
+
+  playClick() {
+    this.tone({ freq: 1250, type: 'sine', dur: 0.05, vol: 0.06 });
+  }
+};
 
 /* ================= 对局状态 ================= */
 let board;
@@ -848,6 +1008,7 @@ function placeStone(x, y, color, instant = false) {
   moveCountEl.textContent = '手数 ' + history.length;
   addHistoryItem();
   dropStoneAnimated(x, y, color, instant);
+  AudioEngine.playStone(color);
   const win = checkWin(board, x, y, color);
   if (win) { endGame(color, win); return win; }
   if (history.length >= SIZE * SIZE) { endGame(0, null); return []; }
@@ -866,6 +1027,7 @@ function endGame(winner, winCells) {
     setStatus('和棋');
     if (turnInfoEl) turnInfoEl.textContent = '和棋';
     spawnDrawParticles();
+    AudioEngine.playDraw();
     flashScreen('taiji');
   } else if (winner === playerColor) {
     if (winIcon) winIcon.innerHTML = ICON_WIN;
@@ -878,8 +1040,11 @@ function endGame(winner, winCells) {
       const mid = winCells[Math.floor(winCells.length / 2)];
       const wp = gridToWorld(mid.x, mid.y);
       spawnWinParticles(wp);
+      AudioEngine.playWin();
       focusCameraOn(wp, 8.5);
       flashScreen('gold');
+    } else {
+      AudioEngine.playWin();
     }
   } else {
     if (winIcon) winIcon.innerHTML = ICON_LOSS;
@@ -893,7 +1058,10 @@ function endGame(winner, winCells) {
       const mid = winCells[Math.floor(winCells.length / 2)];
       const wp = gridToWorld(mid.x, mid.y);
       spawnLossParticles(wp);
+      AudioEngine.playLose();
       focusCameraOn(wp, 9.5);
+    } else {
+      AudioEngine.playLose();
     }
     startShake(0.6, 0.4);
     flashScreen('cold');
@@ -978,6 +1146,8 @@ function bindInteraction() {
   renderer.domElement.addEventListener('pointermove', (e) => {
     if (!canHumanPlay()) { previewStone.visible = false; return; }
     const c = cellFromPointer(e.clientX, e.clientY);
+    const prevKey = hoverCell ? hoverCell.x + ',' + hoverCell.y : null;
+    const nextKey = c ? c.x + ',' + c.y : null;
     hoverCell = c;
     if (c && board[c.y][c.x] === 0) {
       const p = gridToWorld(c.x, c.y);
@@ -985,6 +1155,8 @@ function bindInteraction() {
       previewStone.position.set(p.x, STONE_Y + 0.12 + Math.sin(performance.now() * 0.005) * 0.05, p.z);
       previewStone.material = playerColor === 1 ? previewMatBlack : previewMatWhite;
       renderer.domElement.style.cursor = 'pointer';
+      // 进入新交叉点时播放微弱轻音
+      if (nextKey !== prevKey) AudioEngine.playHover();
     } else {
       previewStone.visible = false;
       renderer.domElement.style.cursor = 'default';
@@ -995,6 +1167,7 @@ function bindInteraction() {
     previewStone.visible = false;
   });
   renderer.domElement.addEventListener('pointerdown', (e) => {
+    AudioEngine.ensure();
     if (e.button === 2) return;
     if (!canHumanPlay()) return;
     const c = cellFromPointer(e.clientX, e.clientY);
@@ -1025,6 +1198,8 @@ function bindUI() {
 
   document.getElementById('undoBtn').onclick = () => {
     if (aiThinking || history.length === 0) return;
+    AudioEngine.ensure();
+    AudioEngine.playUndo();
     if (gameOver) {
       while (history.length && history[history.length - 1].color !== playerColor) {
         const m = history.pop();
@@ -1126,6 +1301,17 @@ function bindUI() {
       };
     };
   }
+  if (soundBtn) {
+    AudioEngine.syncButton();
+    soundBtn.onclick = () => {
+      AudioEngine.ensure();
+      AudioEngine.setMuted(!AudioEngine.muted);
+      if (!AudioEngine.muted) AudioEngine.playClick();
+    };
+  }
+  // 首次交互即解锁 AudioContext（浏览器自动播放策略）
+  window.addEventListener('pointerdown', () => AudioEngine.ensure(), { passive: true });
+  window.addEventListener('keydown', () => AudioEngine.ensure());
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'r' || e.key === 'R') resetView(false);
